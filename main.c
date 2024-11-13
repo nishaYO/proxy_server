@@ -5,6 +5,33 @@
 #include <unistd.h>
 #include <string.h>
 
+// Extract host name (target server) from the client request
+char *extractTargetHost(char request_buffer[]){
+    char *host_header_start = strstr(request_buffer, "Host: ");
+    if (host_header_start == NULL) {
+        perror("Host header not found.");
+        return NULL;
+    }
+
+    char *host_line_copy = strdup(host_header_start);
+    if(host_line_copy==NULL){
+        perror("Could not allocate memory to host_line_copy.");
+        return NULL;
+    }
+
+    char *host_name = strtok(host_line_copy+6, "\n"); // converts \n to \0
+    char *host_name_copy = NULL;
+    if(host_name == NULL){
+        perror("Failed to parse the hostname");
+    } else {
+        host_name_copy = strdup(host_name);
+    }
+
+    free(host_line_copy);
+    return host_name_copy;
+}
+
+
 int main() {
     // Create a socket
     int proxy_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -44,27 +71,32 @@ int main() {
         printf("Accepted client request.\n");
 
         // Buffer initialize to store client request data
-        char buffer[1024];
-        long buffer_len = sizeof(buffer);
+        char request_buffer[1024];
+        long request_buffer_len = sizeof(request_buffer);
 
         // Receive data from client socket 
-        int bytes_received = recv(client_fd, buffer, buffer_len, 0);
+        int bytes_received = recv(client_fd, request_buffer, request_buffer_len, 0);
         if(bytes_received < 0){
             perror("RECV");
             close(client_fd);
+            continue;
         }
 
-        buffer[bytes_received] = '\0'; // null terminate the buffer to make a valid string
-        printf("Buffer: \n%s\n-----------------\n", buffer);
-
-        // Find host (target server)
-        char *host_ptr = strstr(buffer, "Host: ");
-        char* host;
-        if (host_ptr) {
-            host = strtok(host_ptr+6, "\n"); // note: changes original buffer
+        // Parse hostname from request
+        request_buffer[bytes_received] = '\0'; // null terminate the request_buffer to make a valid string
+        printf("Request Buffer: \n%s\n-----------------\n", request_buffer);
+        char *host_name = extractTargetHost(request_buffer);
+        if(!host_name){
+            perror("Main func: hostname not found.");
+        }else{
+            printf("Host: %s\n", host_name);
+            free(host_name);
         }
-        printf("Host: %s\n", host);
+
+        // Close connection and free resources
+        close(client_fd);
     }
+
     close(proxy_fd);
     return 0;
 }
