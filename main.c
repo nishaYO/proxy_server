@@ -4,33 +4,9 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <string.h>
-
-// Extract host name (target server) from the client request
-char *extractTargetHost(char request_buffer[]){
-    char *host_header_start = strstr(request_buffer, "Host: ");
-    if (host_header_start == NULL) {
-        perror("Host header not found.");
-        return NULL;
-    }
-
-    char *host_line_copy = strdup(host_header_start);
-    if(host_line_copy==NULL){
-        perror("Could not allocate memory to host_line_copy.");
-        return NULL;
-    }
-
-    char *host_name = strtok(host_line_copy+6, "\n"); // converts \n to \0
-    char *host_name_copy = NULL;
-    if(host_name == NULL){
-        perror("Failed to parse the hostname");
-    } else {
-        host_name_copy = strdup(host_name);
-    }
-
-    free(host_line_copy);
-    return host_name_copy;
-}
-
+#include <netdb.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
 
 int main() {
     // Create a socket
@@ -85,15 +61,34 @@ int main() {
         // Parse hostname from request
         request_buffer[bytes_received] = '\0'; // null terminate the request_buffer to make a valid string
         printf("Request Buffer: \n%s\n-----------------\n", request_buffer);
+
         char *host_name = extractTargetHost(request_buffer);
-        if(!host_name){
+
+        if(host_name == NULL){
             perror("Main func: hostname not found.");
-        }else{
-            printf("Host: %s\n", host_name);
-            free(host_name);
+            close(client_fd);
+            continue;
+        }
+
+        printf("Host: %s\n", host_name);
+
+        // Find target server port number from request buffer
+        int *target_port = getHostPortNumber(host_name); // todo: pass host_name by value 
+
+        // Forward req to the target server and get response 
+        char *response = forwardRequestToTarget(host_name, target_port, request_buffer);
+        if (response == NULL){
+            printf("Error while getting response from forwardRequestToTarget() in main ().");
+        }
+
+        // Send the response to the client 
+        int *status = sendResponseToClient(client_fd, response);
+        if (status!=0){
+            printf("Unsuccessful status from sendResponseToClient");
         }
 
         // Close connection and free resources
+        free(host_name);
         close(client_fd);
     }
 
