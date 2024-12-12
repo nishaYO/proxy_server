@@ -7,6 +7,22 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
+#include <parse.h>
+#include <network.h>
+
+// Structure to hold the parsed HTTP request
+typedef struct {
+    char method[10];          // HTTP method (GET, POST, etc.)
+    char url[1024];           // URL or path
+    char headers[2048];       // Headers as a string
+    char body[8192];          // Request body
+    int complete;             // Flag to check if parsing is done
+} http_request_t;
+
+// Function prototypes
+http_request_t *parse_http1_request(char *request_buffer);
+char *forwardRequestToTarget(http_request_t *req);
+int sendResponseToClient(int client_fd, char *response);
 
 int main() {
     // Create a socket
@@ -22,17 +38,19 @@ int main() {
     proxy_addr.sin_port = htons(8080);
     proxy_addr.sin_addr.s_addr = INADDR_ANY;
 
-    unsigned int client_addr_len = (unsigned int)sizeof(client_addr);
+    size_t client_addr_len = sizeof(client_addr);
 
     // Bind socket with address
     if(bind(proxy_fd, (struct sockaddr*)&proxy_addr, sizeof(proxy_addr)) != 0 ){
         perror("BIND");
+        close(proxy_fd);
         exit(EXIT_FAILURE);
     }
 
     // Listen from the socket endpoint 
     if(listen(proxy_fd, 5) != 0){
         perror("LISTEN");
+        close(proxy_fd);
         exit(EXIT_FAILURE);
     }
 
@@ -41,55 +59,54 @@ int main() {
         int client_fd = accept(proxy_fd, (struct sockaddr*)&client_addr, &client_addr_len);
         if(client_fd < 0){
             perror("ACCEPT");
-            exit(EXIT_FAILURE);
+            continue;
         }
  
         printf("Accepted client request.\n");
 
         // Buffer initialize to store client request data
         char request_buffer[1024];
-        long request_buffer_len = sizeof(request_buffer);
+        size_t request_buffer_len = sizeof(request_buffer);
 
         // Receive data from client socket 
         int bytes_received = recv(client_fd, request_buffer, request_buffer_len, 0);
         if(bytes_received < 0){
             perror("RECV");
+            printf("Failed to receive data, bytes_received = %d\n", bytes_received);
             close(client_fd);
             continue;
         }
 
-        // Parse hostname from request
         request_buffer[bytes_received] = '\0'; // null terminate the request_buffer to make a valid string
         printf("Request Buffer: \n%s\n-----------------\n", request_buffer);
 
-        char *host_name = extractTargetHost(request_buffer);
-
-        if(host_name == NULL){
-            perror("Main func: hostname not found.");
+        // Parse from request
+        http_request_t *req = parse_http1_request(request_buffer);
+        if (req == NULL) {
+            fprintf(stderr, "Failed to parse HTTP request\n");
             close(client_fd);
             continue;
         }
 
-        printf("Host: %s\n", host_name);
-
-        // Find target server port number from request buffer
-        int *target_port = getHostPortNumber(host_name); // todo: pass host_name by value 
-
         // Forward req to the target server and get response 
-        char *response = forwardRequestToTarget(host_name, target_port, request_buffer);
+        char *response = forwardRequestToTarget(req);
         if (response == NULL){
-            printf("Error while getting response from forwardRequestToTarget() in main ().");
+            fprintf(stderr, "Failed to forward Request To Target.\n");
+            free(req);
+            close(client_fd);
+            continue;
         }
 
         // Send the response to the client 
-        int *status = sendResponseToClient(client_fd, response);
-        if (status!=0){
-            printf("Unsuccessful status from sendResponseToClient");
+        if (sendResponseToClient(client_fd, response) != 0) {
+            fprintf(stderr, "Error sending response to client\n");
         }
 
-        // Close connection and free resources
-        free(host_name);
-        close(client_fd);
+        // Cleanup
+        free(req);
+        free(response);
+        shutdown(client_fd, SHUT_RDWR); // Stop reading/writing on the socket
+        close(client_fd);  // Close the client socket
     }
 
     close(proxy_fd);

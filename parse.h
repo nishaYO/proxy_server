@@ -7,11 +7,11 @@
 typedef struct {
     char method[10];          // HTTP method (GET, POST, etc.)
     char url[1024];           // URL or path
-    char headers[2048];       // Headers as a string
+    char headers[2048];    // Headers as a linked list pointer 
     char body[8192];          // Request body
     int complete;             // Flag to check if parsing is done
 } http_request_t;
- 
+
 // Helper function to append strings safely
 void append_str(char *dest, const char *src, size_t max_len) {
     strncat(dest, src, max_len - strlen(dest) - 1);
@@ -57,7 +57,7 @@ int on_message_complete(llhttp_t *parser) {
 }
 
 // Function to parse the HTTP1 request using llhttp
-void parse_http1_request(char *http_request) {
+http_request_t* parse_http1_request(char *http_request) {
     // Initialize llhttp parser
     llhttp_t parser;
     llhttp_settings_t settings;
@@ -88,11 +88,12 @@ void parse_http1_request(char *http_request) {
     } else {
         fprintf(stderr, "Parse error: %s %s\n", llhttp_errno_name(err), parser.reason);
     }
+    return &req;
 }
 
 
-int main(){
-    char* sample_req = "GET /pub/WWW/TheProject.html HTTP/1.1\r\nHost: www.w3.org\r\n\r\n";
-    parse_http1_request(sample_req);
-    return 0;
-}
+// int main(){
+//     char* sample_req = "GET /pub/WWW/TheProject.html HTTP/1.1\r\nHost: www.w3.org\r\n\r\n";
+//     http_request_t* request =  parse_http1_request(sample_req);
+//     return 0;
+// }

@@ -4,11 +4,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Structure to hold the parsed HTTP request
+typedef struct {
+    char method[10];          // HTTP method (GET, POST, etc.)
+    char url[1024];           // URL or path
+    char headers[2048];       // Headers as a string
+    char body[8192];          // Request body
+    int complete;             // Flag to check if parsing is done
+} http_request_t;
+
+
 struct memory {
     char *response;
     size_t size;
 };
 
+// Assemble the response from the target server
 size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
     // Get the response already received and stored
     struct memory *mem = (struct memory *)userp;
@@ -36,18 +47,41 @@ size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
 }
 
 // Function to forward a request to a target host and return the response
-char *forwardReqToTarget(char *host_name, int target_port, char *request_buffer) {
+char *forwardReqToTarget(http_request_t *request) {
     CURL *curl =  curl_easy_init();
+    if (!curl) {
+        fprintf(stderr, "Failed to initialize cURL\n");
+        return NULL;
+    }
 
-    curl_easy_setopt(curl, CURLOPT_URL, host_name);
+    curl_easy_setopt(curl, CURLOPT_URL, request->url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
 
     struct memory chunk;
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
     
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_buffer);
+    // Set method dynamically
+    if (strcmp(request->method, "POST") == 0) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    }else if (strcmp(request->method, "GET") == 0) {
+        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    }else {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request->method); //  for put, delete, patch, head, options etc
+    };
+
+    if(request->headers) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, request->headers);
+    }
+
+    if(request->body){
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request->body);
+    }
 
     CURLcode status = curl_easy_perform(curl);
+    if(status != CURLE_OK) {
+        fprintf(stderr, "cURL error: %s\n", curl_easy_strerror(status));
+        return NULL;
+    }
 
     curl_easy_cleanup(curl);
     return chunk.response;
