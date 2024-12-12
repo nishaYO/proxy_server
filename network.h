@@ -13,10 +13,21 @@ typedef struct {
     int complete;             // Flag to check if parsing is done
 } http_request_t;
 
-
 struct memory {
     char *response;
     size_t size;
+};
+
+// Convert headers from string to linked list 
+typedef struct curl_slist curl_slist;
+void convertToLinkedList(char* headers, curl_slist **headersll){
+    char *token = strtok(headers, '\n');  // Split the header by \n
+
+    // Loop through all tokens(key-value pairs)
+    while (token != NULL) {
+        token = strtok(NULL, '\n');
+        *headersll = curl_slist_append(*headersll, token); // append each header to a new node
+    }
 };
 
 // Assemble the response from the target server
@@ -29,6 +40,7 @@ size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
     char *newresptr = (char *)realloc((void *)mem->response, mem->size + realsize + 1); // 1 extra byte for null termination to sep chunks
     if(newresptr == NULL){
         printf("Memory could not be reallocated to newresptr in write_data().");
+        free(mem->response);
         return 0;
     }
 
@@ -58,6 +70,13 @@ char *forwardReqToTarget(http_request_t *request) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
 
     struct memory chunk;
+    chunk.response = malloc(1);  // Allocate memory for the initial empty response
+    chunk.size = 0;              // Initialize size to 0
+    if (chunk.response == NULL) {
+        fprintf(stderr, "Memory allocation failed for response buffer.\n");
+        return NULL;
+    }
+
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
     
     // Set method dynamically
@@ -69,8 +88,10 @@ char *forwardReqToTarget(http_request_t *request) {
         curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request->method); //  for put, delete, patch, head, options etc
     };
 
-    if(request->headers) {
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, request->headers);
+    curl_slist *headersll = NULL; 
+    if(request->headers && strlen(request->headers)!=0) {
+        convertToLinkedList(request->headers, &headersll);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headersll);
     }
 
     if(request->body){
@@ -80,9 +101,12 @@ char *forwardReqToTarget(http_request_t *request) {
     CURLcode status = curl_easy_perform(curl);
     if(status != CURLE_OK) {
         fprintf(stderr, "cURL error: %s\n", curl_easy_strerror(status));
+        free(chunk.response);
+        curl_slist_free_all(headersll);
         return NULL;
     }
 
     curl_easy_cleanup(curl);
+    curl_slist_free_all(headersll);
     return chunk.response;
 }

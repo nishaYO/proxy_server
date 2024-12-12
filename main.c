@@ -21,7 +21,7 @@ typedef struct {
 
 // Function prototypes
 http_request_t *parse_http1_request(char *request_buffer);
-char *forwardRequestToTarget(http_request_t *req);
+char *forwardReqToTarget(http_request_t *req);
 int sendResponseToClient(int client_fd, char *response);
 
 int main() {
