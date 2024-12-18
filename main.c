@@ -7,17 +7,9 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
-#include <parse.h>
-#include <network.h>
 
-// Structure to hold the parsed HTTP request
-typedef struct {
-    char method[10];          // HTTP method (GET, POST, etc.)
-    char url[1024];           // URL or path
-    char headers[2048];       // Headers as a string
-    char body[8192];          // Request body
-    int complete;             // Flag to check if parsing is done
-} http_request_t;
+#include "parse.h"
+#include "network.h"
 
 // Function prototypes
 http_request_t *parse_http1_request(char *request_buffer);
@@ -103,7 +95,11 @@ int main() {
         }
 
         // Cleanup
-        free(req);
+        if (req) {
+            if (req->headers) free(req->headers);
+            if (req->body) free(req->body);
+            free(req);  // Free the main structure
+        }
         free(response);
         shutdown(client_fd, SHUT_RDWR); // Stop reading/writing on the socket
         close(client_fd);  // Close the client socket

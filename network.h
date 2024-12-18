@@ -1,17 +1,12 @@
+#ifndef NETWORK_H
+#define NETWORK_H
+
+#include "parse.h" // To use http_request_t
 #include <stdio.h>
 #include <sys/socket.h>
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <string.h>
-
-// Structure to hold the parsed HTTP request
-typedef struct {
-    char method[10];          // HTTP method (GET, POST, etc.)
-    char url[1024];           // URL or path
-    char headers[2048];       // Headers as a string
-    char body[8192];          // Request body
-    int complete;             // Flag to check if parsing is done
-} http_request_t;
 
 struct memory {
     char *response;
@@ -110,3 +105,5 @@ char *forwardReqToTarget(http_request_t *request) {
     curl_slist_free_all(headersll);
     return chunk.response;
 }
+
+#endif 
