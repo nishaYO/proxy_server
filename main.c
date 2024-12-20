@@ -7,30 +7,49 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
+#include <signal.h>
 
 #include "parse.h"
 #include "network.h"
 
+int proxy_fd;
+
+// Signal handler function for SIGINT
+void handle_sigint(int sig) {
+    printf("\nCaught SIGINT (Ctrl+C). Shutting down the server...\n");
+
+    // Close the proxy socket
+    if (proxy_fd >= 0) {
+        close(proxy_fd);
+        printf("Proxy socket closed.\n");
+    }
+
+    exit(0); // Exit the program gracefully
+}
+
 // Function prototypes
 http_request_t *parse_http1_request(char *request_buffer);
 char *forwardReqToTarget(http_request_t *req);
-int sendResponseToClient(int client_fd, char *response);
+// int sendResponseToClient(int client_fd, char *response);
 
 int main() {
+    // Register the SIGINT handler
+    signal(SIGINT, handle_sigint);
+
     // Create a socket
-    int proxy_fd = socket(AF_INET, SOCK_STREAM, 0);
+    proxy_fd = socket(AF_INET, SOCK_STREAM, 0);
     if(proxy_fd == -1){
         perror("SOCKET FILE DESC");
         exit(EXIT_FAILURE);
     }
 
-    // Address info
+    // Address info 
     struct sockaddr_in proxy_addr, client_addr;
     proxy_addr.sin_family = AF_INET;
     proxy_addr.sin_port = htons(8080);
     proxy_addr.sin_addr.s_addr = INADDR_ANY;
 
-    size_t client_addr_len = sizeof(client_addr);
+    socklen_t client_addr_len = sizeof(client_addr);
 
     // Bind socket with address
     if(bind(proxy_fd, (struct sockaddr*)&proxy_addr, sizeof(proxy_addr)) != 0 ){
@@ -45,6 +64,8 @@ int main() {
         close(proxy_fd);
         exit(EXIT_FAILURE);
     }
+
+    printf("Proxy server is running. Press Ctrl+C to stop.\n");
 
     while(1){
         // Accept the client request 
@@ -69,30 +90,36 @@ int main() {
             continue;
         }
 
+        if (bytes_received >= sizeof(request_buffer)) {
+            fprintf(stderr, "Request too large for buffer from recv.\n");
+            close(client_fd);
+            continue;
+        }
+
         request_buffer[bytes_received] = '\0'; // null terminate the request_buffer to make a valid string
         printf("Request Buffer: \n%s\n-----------------\n", request_buffer);
 
         // Parse from request
         http_request_t *req = parse_http1_request(request_buffer);
-        if (req == NULL) {
+        if (!req) {
             fprintf(stderr, "Failed to parse HTTP request\n");
             close(client_fd);
             continue;
         }
 
         // Forward req to the target server and get response 
-        char *response = forwardRequestToTarget(req);
-        if (response == NULL){
+        char *response = forwardReqToTarget(req);
+        if (!response){
             fprintf(stderr, "Failed to forward Request To Target.\n");
             free(req);
             close(client_fd);
             continue;
         }
-
-        // Send the response to the client 
-        if (sendResponseToClient(client_fd, response) != 0) {
-            fprintf(stderr, "Error sending response to client\n");
-        }
+        printf("response from target: %s\n", response);
+        // // Send the response to the client 
+        // if (sendResponseToClient(client_fd, response) != 0) {
+        //     fprintf(stderr, "Error sending response to client\n");
+        // }
 
         // Cleanup
         if (req) {

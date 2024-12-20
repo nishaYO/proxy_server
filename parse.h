@@ -15,11 +15,6 @@ typedef struct {
     int complete;             // Flag to check if parsing is done
 } http_request_t;
 
-// Helper function to append strings safely
-void append_str(char *dest, const char *src, size_t max_len) {
-    strncat(dest, src, max_len - strlen(dest) - 1);
-}
-
 // Callbacks for the llhttp parser
 int on_method(llhttp_t *parser, const char *at, size_t length){
     http_request_t *req = (http_request_t *)parser->data;
@@ -68,7 +63,11 @@ int on_header_value(llhttp_t *parser, const char *at, size_t length) {
 
     // Reallocate memory to fit the new header value
     char *temp_headers = (char*)realloc(req->headers, new_length);
-    if (!temp_headers) return -1;  // Handle memory allocation failure
+    if (!temp_headers) {
+        fprintf(stderr, "Memory allocation failed while resizing headers.\n");
+        return -1;
+    }
+
     *headers = temp_headers;
 
     strncat(req->headers, at, length);
@@ -132,12 +131,14 @@ http_request_t* parse_http1_request(char *http_request) {
         printf("Method: %s\n", req->method);
         printf("URL: %s\n", req->url);
         printf("Headers: %s\n", req->headers);
-        if (strlen(req->body) > 0) {
+        
+        if (req->body) {
             printf("Body: %s\n", req->body);
         }
     } else {
         fprintf(stderr, "Parse error: %s %s\n", llhttp_errno_name(err), parser.reason);
     }
+
     return req;
 }
 

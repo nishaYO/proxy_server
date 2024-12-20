@@ -14,14 +14,15 @@ struct memory {
 };
 
 // Convert headers from string to linked list 
-typedef struct curl_slist curl_slist;
-void convertToLinkedList(char* headers, curl_slist **headersll){
-    char *token = strtok(headers, '\n');  // Split the header by \n
 
+typedef struct curl_slist curl_slist;
+
+void convertToLinkedList(char* headers, curl_slist **headersll){
+    char *token = strtok(headers, "\n");  // Split the header by \n
     // Loop through all tokens(key-value pairs)
     while (token != NULL) {
-        token = strtok(NULL, '\n');
         *headersll = curl_slist_append(*headersll, token); // append each header to a new node
+        token = strtok(NULL, "\n");
     }
 };
 
@@ -32,8 +33,8 @@ size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
 
     // Expand the size of the existing response to append new response chunk
     size_t realsize = size * nmemb;
-    char *newresptr = (char *)realloc((void *)mem->response, mem->size + realsize + 1); // 1 extra byte for null termination to sep chunks
-    if(newresptr == NULL){
+    char *newresptr = (char *)realloc(mem->response, mem->size + realsize + 1); // 1 extra byte for null termination to sep chunks
+    if(!newresptr){
         printf("Memory could not be reallocated to newresptr in write_data().");
         free(mem->response);
         return 0;
@@ -67,8 +68,9 @@ char *forwardReqToTarget(http_request_t *request) {
     struct memory chunk;
     chunk.response = malloc(1);  // Allocate memory for the initial empty response
     chunk.size = 0;              // Initialize size to 0
-    if (chunk.response == NULL) {
+    if (!chunk.response) {
         fprintf(stderr, "Memory allocation failed for response buffer.\n");
+        curl_easy_cleanup(curl);
         return NULL;
     }
 
@@ -97,12 +99,13 @@ char *forwardReqToTarget(http_request_t *request) {
     if(status != CURLE_OK) {
         fprintf(stderr, "cURL error: %s\n", curl_easy_strerror(status));
         free(chunk.response);
-        curl_slist_free_all(headersll);
+        if (headersll) curl_slist_free_all(headersll);
+        curl_easy_cleanup(curl);
         return NULL;
     }
 
     curl_easy_cleanup(curl);
-    curl_slist_free_all(headersll);
+    if (headersll) curl_slist_free_all(headersll);
     return chunk.response;
 }
 
