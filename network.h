@@ -14,18 +14,22 @@ struct memory {
 };
 
 // Convert headers from string to linked list 
-
 typedef struct curl_slist curl_slist;
 
 void convertToLinkedList(char* headers, curl_slist **headersll){
-    char *token = strtok(headers, "\n");  // Split the header by \n
-    // Loop through all tokens(key-value pairs)
+    char *headers_copy = strdup(headers); // Create a duplicate of headers
+    if (!headers_copy) {
+        fprintf(stderr, "Failed to duplicate headers.\n");
+        return;
+    }
+
+    char *token = strtok(headers_copy, "\n");  // Split the header by \n
     while (token != NULL) {
-        *headersll = curl_slist_append(*headersll, token); // append each header to a new node
+        *headersll = curl_slist_append(*headersll, token); // Append each header to a new node
         token = strtok(NULL, "\n");
     }
+    free(headers_copy);
 };
-
 // Assemble the response from the target server
 size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
     // Get the response already received and stored
@@ -35,8 +39,7 @@ size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
     size_t realsize = size * nmemb;
     char *newresptr = (char *)realloc(mem->response, mem->size + realsize + 1); // 1 extra byte for null termination to sep chunks
     if(!newresptr){
-        printf("Memory could not be reallocated to newresptr in write_data().");
-        free(mem->response);
+        printf("Memory could not be reallocated to newresptr in write_data() for %s.\n", (char*)buffer);
         return 0;
     }
 
@@ -56,57 +59,106 @@ size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
 
 // Function to forward a request to a target host and return the response
 char *forwardReqToTarget(http_request_t *request) {
-    CURL *curl =  curl_easy_init();
+    // Initialize Curl
+    CURL *curl = curl_easy_init();
     if (!curl) {
         fprintf(stderr, "Failed to initialize cURL\n");
         return NULL;
     }
 
+    // Set request URL 
     curl_easy_setopt(curl, CURLOPT_URL, request->url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+    
+    // Allocate memory for response headers and body
+    struct memory headers_chunk = { .response = malloc(1), .size = 0 };
+    struct memory body_chunk = { .response = malloc(1), .size = 0 };
 
-    struct memory chunk;
-    chunk.response = malloc(1);  // Allocate memory for the initial empty response
-    chunk.size = 0;              // Initialize size to 0
-    if (!chunk.response) {
-        fprintf(stderr, "Memory allocation failed for response buffer.\n");
+    if (!headers_chunk.response || !body_chunk.response) {
+        fprintf(stderr, "Memory allocation failed.\n");
+        free(headers_chunk.response);
+        free(body_chunk.response);
         curl_easy_cleanup(curl);
         return NULL;
     }
 
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-    
-    // Set method dynamically
+    // Assemble response headers and body using callbacks
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_data);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)&headers_chunk);
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&body_chunk);
+
+    // Set method for request
     if (strcmp(request->method, "POST") == 0) {
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    }else if (strcmp(request->method, "GET") == 0) {
+    } else if (strcmp(request->method, "GET") == 0) {
         curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    }else {
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request->method); //  for put, delete, patch, head, options etc
-    };
+    } else {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request->method);
+    }
 
-    curl_slist *headersll = NULL; 
-    if(request->headers && strlen(request->headers)!=0) {
+    // Convert req headers from string to linked list 
+    curl_slist *headersll = NULL;
+    if (request->headers && strlen(request->headers) != 0) {
         convertToLinkedList(request->headers, &headersll);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headersll);
     }
 
-    if(request->body){
+    // Set request body 
+    if (request->body) {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request->body);
     }
 
+    // Make http request with curl
     CURLcode status = curl_easy_perform(curl);
-    if(status != CURLE_OK) {
+    // Check if request successful
+    if (status != CURLE_OK) {
         fprintf(stderr, "cURL error: %s\n", curl_easy_strerror(status));
-        free(chunk.response);
+        free(headers_chunk.response);
+        free(body_chunk.response);
         if (headersll) curl_slist_free_all(headersll);
         curl_easy_cleanup(curl);
         return NULL;
     }
 
-    curl_easy_cleanup(curl);
+    // Assemble and create final http response 
+    size_t total_size = headers_chunk.size + body_chunk.size + 50;
+    char *final_response = malloc(total_size);
+    if (!final_response) {
+        fprintf(stderr, "Memory allocation failed for final response.\n");
+        free(headers_chunk.response);
+        free(body_chunk.response);
+        if (headersll) curl_slist_free_all(headersll);
+        curl_easy_cleanup(curl);
+        return NULL;
+    }
+
+    // append headers and body to final response
+    snprintf(final_response, total_size, "%s\r\n%s\r\n", headers_chunk.response, body_chunk.response);
+
+    // Cleanup
+    free(headers_chunk.response);
+    free(body_chunk.response);
     if (headersll) curl_slist_free_all(headersll);
-    return chunk.response;
+    curl_easy_cleanup(curl);
+
+    return final_response;
 }
 
-#endif 
+// Send the http response from target server back to the client socket
+int sendResponseToClient(int client_fd, char *response) {
+    size_t len = strlen(response);
+    size_t total_sent = 0;
+    // Loop to avoid data truncation
+    while (total_sent < len) {
+        ssize_t sent_bytes = send(client_fd, response + total_sent, len - total_sent, 0);
+        if (sent_bytes < 0) {
+            perror("SEND");
+            return -1;
+        }
+        total_sent += sent_bytes;
+    }
+    return 0;
+}
+
+#endif

@@ -30,7 +30,7 @@ void handle_sigint(int sig) {
 // Function prototypes
 http_request_t *parse_http1_request(char *request_buffer);
 char *forwardReqToTarget(http_request_t *req);
-// int sendResponseToClient(int client_fd, char *response);
+int sendResponseToClient(int client_fd, char *response);
 
 int main() {
     // Register the SIGINT handler
@@ -117,9 +117,9 @@ int main() {
         }
         printf("response from target: %s\n", response);
         // // Send the response to the client 
-        // if (sendResponseToClient(client_fd, response) != 0) {
-        //     fprintf(stderr, "Error sending response to client\n");
-        // }
+        if (sendResponseToClient(client_fd, response) != 0) {
+            fprintf(stderr, "Error sending response to client\n");
+        }
 
         // Cleanup
         if (req) {
