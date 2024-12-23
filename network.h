@@ -16,7 +16,7 @@ struct memory {
 // Convert headers from string to linked list 
 typedef struct curl_slist curl_slist;
 
-void convertToLinkedList(char* headers, curl_slist **headersll){
+void convert_to_linked_list(char* headers, curl_slist **headersll){
     char *headers_copy = strdup(headers); // Create a duplicate of headers
     if (!headers_copy) {
         fprintf(stderr, "Failed to duplicate headers.\n");
@@ -58,7 +58,7 @@ size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp){
 }
 
 // Function to forward a request to a target host and return the response
-char *forwardReqToTarget(http_request_t *request) {
+char *forward_request_to_target(http_request_t *request) {
     // Initialize Curl
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -100,7 +100,7 @@ char *forwardReqToTarget(http_request_t *request) {
     // Convert req headers from string to linked list 
     curl_slist *headersll = NULL;
     if (request->headers && strlen(request->headers) != 0) {
-        convertToLinkedList(request->headers, &headersll);
+        convert_to_linked_list(request->headers, &headersll);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headersll);
     }
 
@@ -146,7 +146,7 @@ char *forwardReqToTarget(http_request_t *request) {
 }
 
 // Send the http response from target server back to the client socket
-int sendResponseToClient(int client_fd, char *response) {
+int send_response_to_client(int client_fd, char *response) {
     size_t len = strlen(response);
     size_t total_sent = 0;
     // Loop to avoid data truncation

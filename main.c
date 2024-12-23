@@ -16,7 +16,8 @@ int proxy_fd;
 
 // Signal handler function for SIGINT
 void handle_sigint(int sig) {
-    printf("\nCaught SIGINT (Ctrl+C). Shutting down the server...\n");
+    const char *message = "\nCaught SIGINT (Ctrl+C). Shutting down the server...\n";
+    write(STDOUT_FILENO, message, strlen(message));
 
     // Close the proxy socket
     if (proxy_fd >= 0) {
@@ -29,8 +30,68 @@ void handle_sigint(int sig) {
 
 // Function prototypes
 http_request_t *parse_http1_request(char *request_buffer);
-char *forwardReqToTarget(http_request_t *req);
-int sendResponseToClient(int client_fd, char *response);
+char *forward_request_to_target(http_request_t *req);
+int send_response_to_client(int client_fd, char *response);
+
+// Handle client request
+void handle_client_request(int client_fd){
+        // Buffer initialize to store client request data
+        char request_buffer[1024];
+        size_t request_buffer_len = sizeof(request_buffer);
+
+        // Receive data from client socket 
+        int bytes_received = recv(client_fd, request_buffer, request_buffer_len, 0);
+        if(bytes_received < 0){
+            perror("RECV");
+            printf("Failed to receive data, bytes_received = %d\n", bytes_received);
+            close(client_fd);
+            return NULL;
+        }
+
+        if (bytes_received >= sizeof(request_buffer)) {
+            fprintf(stderr, "Request too large for buffer from recv.\n");
+            close(client_fd);
+            return NULL;
+        }
+
+        request_buffer[bytes_received] = '\0'; // null terminate the request_buffer to make a valid string
+        printf("Request Buffer: \n%s\n-----------------\n", request_buffer);
+
+        // Parse from request
+        http_request_t *req = parse_http1_request(request_buffer);
+        if (!req) {
+            fprintf(stderr, "Failed to parse HTTP request\n");
+            close(client_fd);
+            return NULL;
+        }
+
+        // Forward req to the target server and get response 
+        char *response = forward_request_to_target(req);
+        if (!response){
+            fprintf(stderr, "Failed to forward Request To Target.\n");
+            free(req);
+            close(client_fd);
+            return NULL;
+        }
+        printf("response from target: %s\n", response);
+        // // Send the response to the client 
+        if (send_response_to_client(client_fd, response) != 0) {
+            fprintf(stderr, "Error sending response to client\n");
+        }
+
+        // Cleanup
+        if (req) {
+            if (req->headers) free(req->headers);
+            if (req->body) free(req->body);
+            free(req);  // Free the main structure
+        }
+        free(response);
+        shutdown(client_fd, SHUT_RDWR); // Stop reading/writing on the socket
+        close(client_fd);  // Close the client socket
+
+        return NULL;
+}
+
 
 int main() {
     // Register the SIGINT handler
@@ -77,59 +138,7 @@ int main() {
  
         printf("Accepted client request.\n");
 
-        // Buffer initialize to store client request data
-        char request_buffer[1024];
-        size_t request_buffer_len = sizeof(request_buffer);
-
-        // Receive data from client socket 
-        int bytes_received = recv(client_fd, request_buffer, request_buffer_len, 0);
-        if(bytes_received < 0){
-            perror("RECV");
-            printf("Failed to receive data, bytes_received = %d\n", bytes_received);
-            close(client_fd);
-            continue;
-        }
-
-        if (bytes_received >= sizeof(request_buffer)) {
-            fprintf(stderr, "Request too large for buffer from recv.\n");
-            close(client_fd);
-            continue;
-        }
-
-        request_buffer[bytes_received] = '\0'; // null terminate the request_buffer to make a valid string
-        printf("Request Buffer: \n%s\n-----------------\n", request_buffer);
-
-        // Parse from request
-        http_request_t *req = parse_http1_request(request_buffer);
-        if (!req) {
-            fprintf(stderr, "Failed to parse HTTP request\n");
-            close(client_fd);
-            continue;
-        }
-
-        // Forward req to the target server and get response 
-        char *response = forwardReqToTarget(req);
-        if (!response){
-            fprintf(stderr, "Failed to forward Request To Target.\n");
-            free(req);
-            close(client_fd);
-            continue;
-        }
-        printf("response from target: %s\n", response);
-        // // Send the response to the client 
-        if (sendResponseToClient(client_fd, response) != 0) {
-            fprintf(stderr, "Error sending response to client\n");
-        }
-
-        // Cleanup
-        if (req) {
-            if (req->headers) free(req->headers);
-            if (req->body) free(req->body);
-            free(req);  // Free the main structure
-        }
-        free(response);
-        shutdown(client_fd, SHUT_RDWR); // Stop reading/writing on the socket
-        close(client_fd);  // Close the client socket
+        handle_client_request(client_fd);
     }
 
     close(proxy_fd);
