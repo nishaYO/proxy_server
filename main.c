@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <pthread.h>
 
 #include "parse.h"
 #include "network.h"
@@ -21,6 +22,7 @@ void handle_sigint(int sig) {
 
     // Close the proxy socket
     if (proxy_fd >= 0) {
+        
         close(proxy_fd);
         printf("Proxy socket closed.\n");
     }
@@ -34,7 +36,10 @@ char *forward_request_to_target(http_request_t *req);
 int send_response_to_client(int client_fd, char *response);
 
 // Handle client request
-void handle_client_request(int client_fd){
+void *handle_client_request(void *arg) {
+        int client_fd = *(int *)arg;  // Dereference the client FD
+        free(arg);                   // Free the dynamically allocated memory
+
         // Buffer initialize to store client request data
         char request_buffer[1024];
         size_t request_buffer_len = sizeof(request_buffer);
@@ -45,13 +50,13 @@ void handle_client_request(int client_fd){
             perror("RECV");
             printf("Failed to receive data, bytes_received = %d\n", bytes_received);
             close(client_fd);
-            return NULL;
+            pthread_exit(NULL);
         }
 
         if (bytes_received >= sizeof(request_buffer)) {
             fprintf(stderr, "Request too large for buffer from recv.\n");
             close(client_fd);
-            return NULL;
+            pthread_exit(NULL);
         }
 
         request_buffer[bytes_received] = '\0'; // null terminate the request_buffer to make a valid string
@@ -62,7 +67,7 @@ void handle_client_request(int client_fd){
         if (!req) {
             fprintf(stderr, "Failed to parse HTTP request\n");
             close(client_fd);
-            return NULL;
+            pthread_exit(NULL);
         }
 
         // Forward req to the target server and get response 
@@ -71,7 +76,7 @@ void handle_client_request(int client_fd){
             fprintf(stderr, "Failed to forward Request To Target.\n");
             free(req);
             close(client_fd);
-            return NULL;
+            pthread_exit(NULL);
         }
         printf("response from target: %s\n", response);
         // // Send the response to the client 
@@ -89,7 +94,7 @@ void handle_client_request(int client_fd){
         shutdown(client_fd, SHUT_RDWR); // Stop reading/writing on the socket
         close(client_fd);  // Close the client socket
 
-        return NULL;
+        pthread_exit(NULL);
 }
 
 
@@ -138,7 +143,24 @@ int main() {
  
         printf("Accepted client request.\n");
 
-        handle_client_request(client_fd);
+        // Create a thread to handle the client request
+        pthread_t thread_id;
+        int *client_fd_ptr = malloc(sizeof(int));
+        if (client_fd_ptr == NULL) {
+            perror("MALLOC");
+            close(client_fd);
+            continue;
+        }
+
+        *client_fd_ptr = client_fd;
+
+        if (pthread_create(&thread_id, NULL, handle_client_request, client_fd_ptr) != 0) {
+            perror("PTHREAD_CREATE");
+            free(client_fd_ptr);
+            close(client_fd);
+        } else {
+            pthread_detach(thread_id); // Detach the thread to allow auto-cleanup
+        }   
     }
 
     close(proxy_fd);
